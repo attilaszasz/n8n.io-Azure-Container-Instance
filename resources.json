@@ -9,7 +9,8 @@
             }
         },
         "timeZone": {
-            "type": "string"
+            "type": "string",
+            "defaultValue":"Europe/Bucharest"
         },
         "dnsNameLabel": {
             "type": "string",
@@ -59,7 +60,7 @@
                             "volumeMounts": [
                                 {
                                     "mountPath":"/home/node/.n8n",
-                                    "name":"~/.n8n",
+                                    "name":"n8n",
                                     "readOnly": false
                                 }
                             ]
