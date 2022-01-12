@@ -8,6 +8,18 @@
                 "description": "Name of the container instance in your Azure subscription."
             }
         },
+        "n8nUsername": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the n8n admin user."
+            }
+        },
+        "n8nPassword": {
+            "type": "securestring",
+            "metadata": {
+                "description": "Password of the n8n admin user."
+            }
+        },
         "timeZone": {
             "type": "string",
             "defaultValue":"Europe/Bucharest"
@@ -17,9 +29,84 @@
             "metadata": {
                 "description": "n8n will be available at this address: <dnsNameLabel>.<region>.azurecontainer.io"
             }
+        },
+        "storageAccountName": {
+            "type": "string",
+            "defaultValue": "[uniqueString(resourceGroup().id)]",
+            "metadata": {
+                "description": "Storage Account for persistent data"
+            }
         }
     },
+    "variables": {
+        "scriptName": "createFileShare",
+        "identityName": "scratch",
+        "roleDefinitionId": "[resourceId('microsoft.authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
+        "roleAssignmentName": "[guid(variables('identityName'), variables('roleDefinitionId'), resourceGroup().id)]",
+        "shareName": "n8n-persistent-data",
+        "scriptToExecute": "[format('Get-AzStorageAccount -StorageAccountName {0} -ResourceGroupName {1} | New-AzStorageShare -Name {2}', parameters('storageAccountName'), resourceGroup().name, variables('shareName'))]"
+    },
     "resources": [
+        {
+            "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+            "apiVersion": "2018-11-30",
+            "name": "[variables('identityName')]",
+            "location": "[resourceGroup().location]"
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2020-04-01-preview",
+            "name": "[variables('roleAssignmentName')]",
+            "properties": {
+                "roleDefinitionId": "[variables('roleDefinitionId')]",
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))).principalId]",
+                "principalType": "ServicePrincipal"
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]"
+            ]
+        },        
+        {
+            "type": "Microsoft.Storage/storageAccounts",
+            "apiVersion": "2021-04-01",
+            "name": "[parameters('storageAccountName')]",
+            "location": "[resourceGroup().location]",
+            "sku": {
+                "name": "Standard_LRS"
+            },
+            "kind": "StorageV2",
+            "dependsOn":[
+                "[resourceId('Microsoft.Authorization/roleAssignments', variables('roleAssignmentName'))]"
+            ]
+        },
+        {
+            "type": "Microsoft.Resources/deploymentScripts",
+            "apiVersion": "2020-10-01",
+            "name": "[format('{0}-{1}', variables('scriptName'), variables('shareName'))]",
+            "location": "[resourceGroup().location]",
+            "kind": "AzurePowerShell",
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]": {}
+                }
+            },
+            "properties": {
+                "azPowerShellVersion": "3.0",
+                "storageAccountSettings": {
+                "storageAccountName": "[parameters('storageAccountName')]",
+                "storageAccountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2021-04-01').keys[0].value]"
+                },
+                "scriptContent": "[variables('scriptToExecute')]",
+                "cleanupPreference": "OnSuccess",
+                "retentionInterval": "P1D",
+                "timeout": "PT5M"
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+            ]
+        },        
         {
             "location": "[resourceGroup().location]",
             "name": "[parameters('containerName')]",
@@ -45,6 +132,18 @@
                                 {
                                     "name": "TZ",
                                     "value": "[parameters('timeZone')]"
+                                },
+                                {
+                                    "name": "N8N_BASIC_AUTH_ACTIVE",
+                                    "value": "true"
+                                },
+                                {
+                                    "name": "N8N_BASIC_AUTH_USER",
+                                    "value": "[parameters('n8nUsername')]"
+                                },
+                                {
+                                    "name": "N8N_BASIC_AUTH_PASSWORD",
+                                    "value": "[parameters('n8nPassword')]"
                                 }
                             ],
                             "ports": [
@@ -82,9 +181,23 @@
                                 }
                             ],
                     "dnsNameLabel": "[parameters('dnsNameLabel')]"
-                }
+                },
+                "volumes": [
+                    {
+                        "azureFile": {
+                        "shareName": "[variables('shareName')]",
+                        "storageAccountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2021-04-01').keys[0].value]",
+                        "storageAccountName": "[parameters('storageAccountName')]"
+                        },
+                        "name": "n8n"
+                    }
+                ]
             },
-            "tags": {}
+            "tags": {},
+            "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                "[resourceId('Microsoft.Resources/deploymentScripts', format('{0}-{1}', variables('scriptName'), variables('shareName')))]"
+            ]
         }
     ]
 }
