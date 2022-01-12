@@ -1,0 +1,89 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "containerName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the container instance in your Azure subscription."
+            }
+        },
+        "timeZone": {
+            "type": "string"
+        },
+        "dnsNameLabel": {
+            "type": "string",
+            "metadata": {
+                "description": "n8n will be available at this address: <dnsNameLabel>.<region>.azurecontainer.io"
+            }
+        }
+    },
+    "resources": [
+        {
+            "location": "[resourceGroup().location]",
+            "name": "[parameters('containerName')]",
+            "type": "Microsoft.ContainerInstance/containerGroups",
+            "apiVersion": "2021-07-01",
+            "properties": {
+                "containers": [
+                    {
+                        "name": "[parameters('containerName')]",
+                        "properties": {
+                            "image": "n8nio/n8n",
+                            "resources": {
+                                "requests": {
+                                    "cpu": 1,
+                                    "memoryInGB": 1.5
+                                }
+                            },
+                            "environmentVariables": [
+                                {
+                                    "name": "GENERIC_TIMEZONE",
+                                    "value": "[parameters('timeZone')]"
+                                },
+                                {
+                                    "name": "TZ",
+                                    "value": "[parameters('timeZone')]"
+                                }
+                            ],
+                            "ports": [
+                                {
+                                    "port": 80,
+                                    "protocol": "TCP"
+                                },
+                                {
+                                    "port": 5678,
+                                    "protocol": "TCP"
+                                }
+                            ],
+                            "volumeMounts": [
+                                {
+                                    "mountPath":"/home/node/.n8n",
+                                    "name":"~/.n8n",
+                                    "readOnly": false
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "restartPolicy": "OnFailure",
+                "osType": "Linux",
+                "ipAddress": {
+                    "type": "Public",
+                    "ports": [
+                                {
+                                    "port": 80,
+                                    "protocol": "TCP"
+                                },
+                                {
+                                    "port": 5678,
+                                    "protocol": "TCP"
+                                }
+                            ],
+                    "dnsNameLabel": "[parameters('dnsNameLabel')]"
+                }
+            },
+            "tags": {}
+        }
+    ]
+}
