@@ -2,10 +2,10 @@
     "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
     "contentVersion": "1.0.0.0",
     "parameters": {
-        "containerName": {
+        "name": {
             "type": "string",
             "metadata": {
-                "description": "Name of the container instance in your Azure subscription."
+                "description": "n8n will be available at this address: <dnsNameLabel>.<region>.azurecontainer.io"
             }
         },
         "n8nUsername": {
@@ -23,28 +23,16 @@
         "timeZone": {
             "type": "string",
             "defaultValue":"Europe/Bucharest"
-        },
-        "dnsNameLabel": {
-            "type": "string",
-            "metadata": {
-                "description": "n8n will be available at this address: <dnsNameLabel>.<region>.azurecontainer.io"
-            }
-        },
-        "storageAccountName": {
-            "type": "string",
-            "defaultValue": "[uniqueString(resourceGroup().id)]",
-            "metadata": {
-                "description": "Storage Account for persistent data"
-            }
         }
     },
     "variables": {
+        "fqdn": "[format('{0}.{1}.azurecontainer.io', parameters('name'), toLower(replace(resourceGroup().location, ' ', '')))]",
         "scriptName": "createFileShare",
         "identityName": "scratch",
         "roleDefinitionId": "[resourceId('microsoft.authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
         "roleAssignmentName": "[guid(variables('identityName'), variables('roleDefinitionId'), resourceGroup().id)]",
         "shareName": "n8n-persistent-data",
-        "scriptToExecute": "[format('Get-AzStorageAccount -StorageAccountName {0} -ResourceGroupName {1} | New-AzStorageShare -Name {2}', parameters('storageAccountName'), resourceGroup().name, variables('shareName'))]"
+        "scriptToExecute": "[format('Get-AzStorageAccount -StorageAccountName {0} -ResourceGroupName {1} | New-AzStorageShare -Name {2}', parameters('name'), resourceGroup().name, variables('shareName'))]"
     },
     "resources": [
         {
@@ -69,7 +57,7 @@
         {
             "type": "Microsoft.Storage/storageAccounts",
             "apiVersion": "2021-04-01",
-            "name": "[parameters('storageAccountName')]",
+            "name": "[parameters('name')]",
             "location": "[resourceGroup().location]",
             "sku": {
                 "name": "Standard_LRS"
@@ -94,8 +82,8 @@
             "properties": {
                 "azPowerShellVersion": "3.0",
                 "storageAccountSettings": {
-                "storageAccountName": "[parameters('storageAccountName')]",
-                "storageAccountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2021-04-01').keys[0].value]"
+                "storageAccountName": "[parameters('name')]",
+                "storageAccountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('name')), '2021-04-01').keys[0].value]"
                 },
                 "scriptContent": "[variables('scriptToExecute')]",
                 "cleanupPreference": "OnSuccess",
@@ -104,24 +92,24 @@
             },
             "dependsOn": [
                 "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('identityName'))]",
-                "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('name'))]"
             ]
         },        
         {
             "location": "[resourceGroup().location]",
-            "name": "[parameters('containerName')]",
+            "name": "[parameters('name')]",
             "type": "Microsoft.ContainerInstance/containerGroups",
             "apiVersion": "2021-07-01",
             "properties": {
                 "containers": [
                     {
-                        "name": "[parameters('containerName')]",
+                        "name": "[parameters('name')]",
                         "properties": {
                             "image": "n8nio/n8n",
                             "resources": {
                                 "requests": {
-                                    "cpu": 1,
-                                    "memoryInGB": 1.5
+                                    "cpu": 0.5,
+                                    "memoryInGB": 0.7
                                 }
                             },
                             "environmentVariables": [
@@ -148,10 +136,6 @@
                             ],
                             "ports": [
                                 {
-                                    "port": 80,
-                                    "protocol": "TCP"
-                                },
-                                {
                                     "port": 5678,
                                     "protocol": "TCP"
                                 }
@@ -159,18 +143,62 @@
                             "volumeMounts": [
                                 {
                                     "mountPath":"/home/node/.n8n",
-                                    "name":"n8n",
-                                    "readOnly": false
+                                    "name":"n8n"
                                 }
                             ]
                         }
-                    }
+                    },
+                    {
+                        "name": "caddy-ssl-server",
+                        "properties": {
+                            "image": "caddy:latest",
+                            "command": [
+                            "caddy", 
+                            "reverse-proxy", 
+                            "--from", 
+                            "[variables('fqdn')]", 
+                            "--to",
+                            "[concat('localhost:', '5678')]"
+                            ],
+                            "ports": [
+                            {
+                                "protocol": "TCP",
+                                "port": 443
+                            },
+                            {
+                                "protocol": "TCP",
+                                "port": 80
+                            }
+                            ],
+                            "environmentVariables": [],
+                            "resources": {
+                            "requests": {
+                                "memoryInGB": 0.5,
+                                "cpu": 0.5
+                            }
+                            },
+                            "volumeMounts": [
+                            {
+                                "name": "data",
+                                "mountPath": "/data"
+                            },
+                            {
+                                "name": "config",
+                                "mountPath": "/config"
+                            }
+                            ]
+                        }
+                        }                    
                 ],
                 "restartPolicy": "OnFailure",
                 "osType": "Linux",
                 "ipAddress": {
                     "type": "Public",
                     "ports": [
+                                {
+                                    "protocol": "TCP",
+                                    "port": 443
+                                },
                                 {
                                     "port": 80,
                                     "protocol": "TCP"
@@ -180,22 +208,30 @@
                                     "protocol": "TCP"
                                 }
                             ],
-                    "dnsNameLabel": "[parameters('dnsNameLabel')]"
+                    "dnsNameLabel": "[parameters('name')]"
                 },
                 "volumes": [
                     {
                         "azureFile": {
                         "shareName": "[variables('shareName')]",
-                        "storageAccountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2021-04-01').keys[0].value]",
-                        "storageAccountName": "[parameters('storageAccountName')]"
+                        "storageAccountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('name')), '2021-04-01').keys[0].value]",
+                        "storageAccountName": "[parameters('name')]"
                         },
                         "name": "n8n"
+                    },
+                    {
+                        "name": "data",
+                        "emptyDir": {}
+                    },
+                    {
+                        "name": "config",
+                        "emptyDir": {}
                     }
                 ]
             },
             "tags": {},
             "dependsOn": [
-                "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('name'))]",
                 "[resourceId('Microsoft.Resources/deploymentScripts', format('{0}-{1}', variables('scriptName'), variables('shareName')))]"
             ]
         }

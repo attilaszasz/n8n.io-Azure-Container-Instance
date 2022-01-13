@@ -1,0 +1,155 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "name": {
+            "type": "string",
+            "metadata": {
+                "description": "n8n will be available at this address: <dnsNameLabel>.<region>.azurecontainer.io"
+            }
+        },
+        "n8nUsername": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the n8n admin user."
+            }
+        },
+        "n8nPassword": {
+            "type": "securestring",
+            "metadata": {
+                "description": "Password of the n8n admin user."
+            }
+        },
+        "timeZone": {
+            "type": "string",
+            "defaultValue":"Europe/Bucharest"
+        }
+    },
+    "variables": {
+        "fqdn": "[format('{0}.{1}.azurecontainer.io', parameters('name'), toLower(replace(resourceGroup().location, ' ', '')))]"
+    },
+    "resources": [      
+        {
+            "location": "[resourceGroup().location]",
+            "name": "[parameters('name')]",
+            "type": "Microsoft.ContainerInstance/containerGroups",
+            "apiVersion": "2021-07-01",
+            "properties": {
+                "containers": [
+                    {
+                        "name": "[parameters('name')]",
+                        "properties": {
+                            "image": "n8nio/n8n",
+                            "resources": {
+                                "requests": {
+                                    "cpu": 0.5,
+                                    "memoryInGB": 0.7
+                                }
+                            },
+                            "environmentVariables": [
+                                {
+                                    "name": "GENERIC_TIMEZONE",
+                                    "value": "[parameters('timeZone')]"
+                                },
+                                {
+                                    "name": "TZ",
+                                    "value": "[parameters('timeZone')]"
+                                },
+                                {
+                                    "name": "N8N_BASIC_AUTH_ACTIVE",
+                                    "value": "true"
+                                },
+                                {
+                                    "name": "N8N_BASIC_AUTH_USER",
+                                    "value": "[parameters('n8nUsername')]"
+                                },
+                                {
+                                    "name": "N8N_BASIC_AUTH_PASSWORD",
+                                    "value": "[parameters('n8nPassword')]"
+                                }
+                            ],
+                            "ports": [
+                                {
+                                    "port": 5678,
+                                    "protocol": "TCP"
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "name": "caddy-ssl-server",
+                        "properties": {
+                            "image": "caddy:latest",
+                            "command": [
+                            "caddy", 
+                            "reverse-proxy", 
+                            "--from", 
+                            "[variables('fqdn')]", 
+                            "--to",
+                            "[concat('localhost:', '5678')]"
+                            ],
+                            "ports": [
+                            {
+                                "protocol": "TCP",
+                                "port": 443
+                            },
+                            {
+                                "protocol": "TCP",
+                                "port": 80
+                            }
+                            ],
+                            "environmentVariables": [],
+                            "resources": {
+                            "requests": {
+                                "memoryInGB": 0.5,
+                                "cpu": 0.5
+                            }
+                            },
+                            "volumeMounts": [
+                            {
+                                "name": "data",
+                                "mountPath": "/data"
+                            },
+                            {
+                                "name": "config",
+                                "mountPath": "/config"
+                            }
+                            ]
+                        }
+                        }                    
+                ],
+                "restartPolicy": "OnFailure",
+                "osType": "Linux",
+                "ipAddress": {
+                    "type": "Public",
+                    "ports": [
+                                {
+                                    "protocol": "TCP",
+                                    "port": 443
+                                },
+                                {
+                                    "port": 80,
+                                    "protocol": "TCP"
+                                },
+                                {
+                                    "port": 5678,
+                                    "protocol": "TCP"
+                                }
+                            ],
+                    "dnsNameLabel": "[parameters('name')]"
+                },
+                "volumes": [
+                    {
+                        "name": "data",
+                        "emptyDir": {}
+                    },
+                    {
+                        "name": "config",
+                        "emptyDir": {}
+                    }
+                ]
+            },
+            "tags": {}
+        }
+    ]
+}
